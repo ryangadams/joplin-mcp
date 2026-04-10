@@ -5,7 +5,7 @@ export interface JoplinNote {
 
 export interface JoplinNoteDetail extends JoplinNote {
   body: string;
-  source_url: string;
+  source_url: string | null;
   parent_id: string;
   updated_time: number;
   created_time: number;
@@ -52,7 +52,10 @@ export class JoplinClient {
     }
     url.searchParams.set("token", this.token);
 
-    const response = await fetch(url.toString(), options);
+    const response = await fetch(url.toString(), {
+      ...options,
+      signal: AbortSignal.timeout(10_000),
+    });
 
     if (!response.ok) {
       throw new Error(
@@ -67,11 +70,12 @@ export class JoplinClient {
     path: string,
     params: Record<string, string> = {}
   ): Promise<T[]> {
+    const MAX_PAGES = 100;
     const items: T[] = [];
     let page = 1;
     let hasMore = true;
 
-    while (hasMore) {
+    while (hasMore && page <= MAX_PAGES) {
       const data = await this.request<PaginatedResponse<T>>(path, {
         ...params,
         page: String(page),
@@ -79,6 +83,12 @@ export class JoplinClient {
       items.push(...data.items);
       hasMore = data.has_more;
       page++;
+    }
+
+    if (hasMore) {
+      throw new Error(
+        `Pagination exceeded ${MAX_PAGES} pages for ${path}`
+      );
     }
 
     return items;
@@ -118,10 +128,21 @@ export class JoplinClient {
     });
   }
 
-  async getNote(id: string): Promise<JoplinNoteDetail> {
-    return this.request<JoplinNoteDetail>(`/notes/${encodeURIComponent(id)}`, {
-      fields: "id,title,body,source_url,parent_id,updated_time,created_time",
-    });
+  async getNote(id: string): Promise<JoplinNoteDetail & { tags: JoplinTag[] }> {
+    const [note, tags] = await Promise.all([
+      this.request<JoplinNoteDetail>(`/notes/${encodeURIComponent(id)}`, {
+        fields: "id,title,body,source_url,parent_id,updated_time,created_time",
+      }),
+      this.getNoteTags(id),
+    ]);
+    return { ...note, tags };
+  }
+
+  async getNoteTags(noteId: string): Promise<JoplinTag[]> {
+    return this.fetchAllPages<JoplinTag>(
+      `/notes/${encodeURIComponent(noteId)}/tags`,
+      { fields: "id,title" }
+    );
   }
 
   async getAllTags(): Promise<JoplinTag[]> {

@@ -111,6 +111,7 @@ server.registerTool(
       }
 
       const meta: string[] = [`Notebook: ${notebookName}`];
+      if (note.tags.length > 0) meta.push(`Tags: ${note.tags.map((t) => t.title).join(", ")}`);
       if (note.source_url) meta.push(`Source: ${note.source_url}`);
 
       return {
@@ -421,7 +422,20 @@ server.registerTool(
   async ({ noteId, tag }) => {
     try {
       const joplinTag = await client.getOrCreateTag(tag);
-      await client.addNoteToTag(joplinTag.id, noteId);
+
+      try {
+        await client.addNoteToTag(joplinTag.id, noteId);
+      } catch {
+        // Joplin returns an error if the note already has this tag
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Note already has tag "${joplinTag.title}".\n\nTag ID: ${joplinTag.id}\nNote ID: ${noteId}`,
+            },
+          ],
+        };
+      }
 
       return {
         content: [
