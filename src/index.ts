@@ -32,15 +32,17 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
-server.tool(
+server.registerTool(
   "search_notes",
-  "Search Joplin notes by keywords. Returns matching note IDs and titles. Use this when the user asks if they have notes about a topic, or wants to find something they wrote down.",
   {
-    query: z
-      .string()
-      .describe(
-        "Search query. Supports Joplin search syntax: plain keywords, quoted phrases, tag:name, notebook:name, title:word, -exclusion"
-      ),
+    description: "Search Joplin notes by keywords. Returns matching note IDs and titles. Use this when the user asks if they have notes about a topic, or wants to find something they wrote down.",
+    inputSchema: {
+      query: z
+        .string()
+        .describe(
+          "Search query. Supports Joplin search syntax: plain keywords, quoted phrases, tag:name, notebook:name, title:word, -exclusion"
+        ),
+    },
   },
   async ({ query }) => {
     try {
@@ -84,18 +86,27 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "get_note",
-  "Fetch the full content of a Joplin note by its ID. Returns the note title and body (Markdown). Use after search_notes to read the actual note.",
   {
-    id: z.string().describe("The note ID returned by search_notes"),
+    description: "Fetch the full content of a Joplin note by its ID. Returns the note title, notebook, and Markdown body. Use after search_notes to read the actual note.",
+    inputSchema: {
+      id: z.string().describe("The note ID returned by search_notes"),
+    },
   },
   async ({ id }) => {
     try {
       const note = await client.getNote(id);
-      const folder = await client.getFolder(note.parent_id);
 
-      const meta: string[] = [`Notebook: ${folder.title}`];
+      let notebookName: string;
+      try {
+        const folder = await client.getFolder(note.parent_id);
+        notebookName = folder.title;
+      } catch {
+        notebookName = note.parent_id;
+      }
+
+      const meta: string[] = [`Notebook: ${notebookName}`];
       if (note.source_url) meta.push(`Source: ${note.source_url}`);
 
       return {
@@ -121,10 +132,11 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "list_notebooks",
-  "List all notebooks (folders) in Joplin. Returns notebook IDs and titles. Use this to explore the user's notebook structure or find a notebook by name.",
-  {},
+  {
+    description: "List all notebooks (folders) in Joplin. Returns notebook IDs and titles. Use this to explore the user's notebook structure or find a notebook by name.",
+  },
   async () => {
     try {
       const folders = await client.listFolders();
@@ -162,11 +174,13 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "get_notes_in_notebook",
-  "List all notes inside a specific Joplin notebook by its ID. Use list_notebooks first to find a notebook ID, then call this to see what notes it contains.",
   {
-    id: z.string().describe("The notebook (folder) ID from list_notebooks"),
+    description: "List all notes inside a specific Joplin notebook by its ID. Use list_notebooks first to find a notebook ID, then call this to see what notes it contains.",
+    inputSchema: {
+      id: z.string().describe("The notebook (folder) ID from list_notebooks"),
+    },
   },
   async ({ id }) => {
     try {
@@ -205,23 +219,32 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "create_note",
-  "Create a new note in Joplin. Use this when the user asks to save something to Joplin, write a note, or make a note of something. The note will be saved to the configured default notebook.",
   {
-    title: z.string().describe("The title of the note"),
-    body: z.string().describe("The note content in Markdown"),
+    description: "Create a new note in Joplin. Use this when the user asks to save something to Joplin, write a note, or make a note of something. The note will be saved to the configured default notebook.",
+    inputSchema: {
+      title: z.string().describe("The title of the note"),
+      body: z.string().describe("The note content in Markdown"),
+    },
   },
   async ({ title, body }) => {
     try {
       const note = await client.createNote(title, body, defaultNotebookId);
-      const folder = await client.getFolder(note.parent_id);
+
+      let notebookName: string;
+      try {
+        const folder = await client.getFolder(note.parent_id);
+        notebookName = folder.title;
+      } catch {
+        notebookName = note.parent_id;
+      }
 
       return {
         content: [
           {
             type: "text",
-            text: `Note created successfully.\n\nTitle: ${note.title}\nNotebook: ${folder.title}\nID: ${note.id}`,
+            text: `Note created successfully.\n\nTitle: ${note.title}\nNotebook: ${notebookName}\nID: ${note.id}`,
           },
         ],
       };
