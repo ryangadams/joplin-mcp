@@ -41,13 +41,18 @@ export class JoplinClient {
     this.token = token;
   }
 
-  async search(query: string): Promise<JoplinNote[]> {
-    const url = new URL(`${this.baseUrl}/search`);
-    url.searchParams.set("query", query);
-    url.searchParams.set("fields", "id,title");
+  private async request<T>(
+    path: string,
+    params: Record<string, string> = {},
+    options: RequestInit = {}
+  ): Promise<T> {
+    const url = new URL(`${this.baseUrl}${path}`);
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value);
+    }
     url.searchParams.set("token", this.token);
 
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), options);
 
     if (!response.ok) {
       throw new Error(
@@ -55,92 +60,49 @@ export class JoplinClient {
       );
     }
 
-    const data = (await response.json()) as JoplinSearchResponse;
+    return response.json() as Promise<T>;
+  }
+
+  async search(query: string): Promise<JoplinNote[]> {
+    const data = await this.request<JoplinSearchResponse>("/search", {
+      query,
+      fields: "id,title",
+    });
     return data.items;
   }
 
   async listFolders(): Promise<JoplinFolder[]> {
-    const url = new URL(`${this.baseUrl}/folders`);
-    url.searchParams.set("fields", "id,title");
-    url.searchParams.set("token", this.token);
-
-    const response = await fetch(url.toString());
-
-    if (!response.ok) {
-      throw new Error(
-        `Joplin API error: ${response.status} ${response.statusText}`
-      );
-    }
-
-    const data = (await response.json()) as JoplinFolderListResponse;
+    const data = await this.request<JoplinFolderListResponse>("/folders", {
+      fields: "id,title",
+    });
     return data.items;
   }
 
   async getFolder(id: string): Promise<JoplinFolder> {
-    const url = new URL(`${this.baseUrl}/folders/${id}`);
-    url.searchParams.set("fields", "id,title");
-    url.searchParams.set("token", this.token);
-
-    const response = await fetch(url.toString());
-
-    if (!response.ok) {
-      throw new Error(
-        `Joplin API error: ${response.status} ${response.statusText}`
-      );
-    }
-
-    return (await response.json()) as JoplinFolder;
+    return this.request<JoplinFolder>(`/folders/${encodeURIComponent(id)}`, {
+      fields: "id,title",
+    });
   }
 
   async getNotesInFolder(folderId: string): Promise<JoplinNote[]> {
-    const url = new URL(`${this.baseUrl}/folders/${folderId}/notes`);
-    url.searchParams.set("fields", "id,title");
-    url.searchParams.set("token", this.token);
-
-    const response = await fetch(url.toString());
-
-    if (!response.ok) {
-      throw new Error(
-        `Joplin API error: ${response.status} ${response.statusText}`
-      );
-    }
-
-    const data = (await response.json()) as JoplinSearchResponse;
+    const data = await this.request<JoplinSearchResponse>(
+      `/folders/${encodeURIComponent(folderId)}/notes`,
+      { fields: "id,title" }
+    );
     return data.items;
   }
 
   async createNote(title: string, body: string, parentId: string): Promise<JoplinCreatedNote> {
-    const url = new URL(`${this.baseUrl}/notes`);
-    url.searchParams.set("token", this.token);
-
-    const response = await fetch(url.toString(), {
+    return this.request<JoplinCreatedNote>("/notes", {}, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, body, parent_id: parentId }),
     });
-
-    if (!response.ok) {
-      throw new Error(
-        `Joplin API error: ${response.status} ${response.statusText}`
-      );
-    }
-
-    return (await response.json()) as JoplinCreatedNote;
   }
 
   async getNote(id: string): Promise<JoplinNoteDetail> {
-    const url = new URL(`${this.baseUrl}/notes/${id}`);
-    url.searchParams.set("fields", "id,title,body,source_url,parent_id,updated_time,created_time");
-    url.searchParams.set("token", this.token);
-
-    const response = await fetch(url.toString());
-
-    if (!response.ok) {
-      throw new Error(
-        `Joplin API error: ${response.status} ${response.statusText}`
-      );
-    }
-
-    return (await response.json()) as JoplinNoteDetail;
+    return this.request<JoplinNoteDetail>(`/notes/${encodeURIComponent(id)}`, {
+      fields: "id,title,body,source_url,parent_id,updated_time,created_time",
+    });
   }
 }
