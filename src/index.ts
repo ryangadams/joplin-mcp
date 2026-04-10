@@ -24,6 +24,10 @@ if (!defaultNotebookId) {
 const port = process.env.JOPLIN_PORT
   ? parseInt(process.env.JOPLIN_PORT, 10)
   : 41184;
+if (Number.isNaN(port)) {
+  console.error("Error: JOPLIN_PORT must be a valid number.");
+  process.exit(1);
+}
 
 const client = new JoplinClient(token, port);
 
@@ -255,6 +259,185 @@ server.registerTool(
           {
             type: "text",
             text: `Failed to create note: ${message}\n\nMake sure Joplin is running with the Web Clipper service enabled (Tools > Options > Web Clipper).`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "get_all_tags",
+  {
+    description: "List all tags in Joplin. Returns tag IDs and titles. Use this to see what tags exist or find a tag by name.",
+  },
+  async () => {
+    try {
+      const tags = await client.getAllTags();
+
+      if (tags.length === 0) {
+        return {
+          content: [{ type: "text", text: "No tags found in Joplin." }],
+        };
+      }
+
+      const list = tags
+        .map((t, i) => `${i + 1}. [${t.id}] ${t.title}`)
+        .join("\n");
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Found ${tags.length} tag${tags.length === 1 ? "" : "s"}:\n\n${list}`,
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to list tags: ${message}\n\nMake sure Joplin is running with the Web Clipper service enabled (Tools > Options > Web Clipper).`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "search_notes_by_tag",
+  {
+    description: "Find all notes that have a specific tag. Searches by tag title (case-insensitive). Use this when the user wants to find notes with a particular tag.",
+    inputSchema: {
+      tag: z.string().describe("The tag title to search for (case-insensitive)"),
+    },
+  },
+  async ({ tag }) => {
+    try {
+      const tags = await client.getAllTags();
+      const normalised = tag.toLowerCase();
+      const match = tags.find((t) => t.title.toLowerCase() === normalised);
+
+      if (!match) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `No tag found matching "${tag}".`,
+            },
+          ],
+        };
+      }
+
+      const notes = await client.getNotesForTag(match.id);
+
+      if (notes.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Tag "${match.title}" exists but has no notes.`,
+            },
+          ],
+        };
+      }
+
+      const list = notes
+        .map((note, i) => `${i + 1}. [${note.id}] ${note.title}`)
+        .join("\n");
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Found ${notes.length} note${notes.length === 1 ? "" : "s"} with tag "${match.title}":\n\n${list}`,
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to search notes by tag: ${message}\n\nMake sure Joplin is running with the Web Clipper service enabled (Tools > Options > Web Clipper).`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "create_tag",
+  {
+    description: "Create a new tag in Joplin. Use this when the user wants to create a tag for organizing notes.",
+    inputSchema: {
+      title: z.string().describe("The tag title to create"),
+    },
+  },
+  async ({ title }) => {
+    try {
+      const tag = await client.createTag(title);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Tag created successfully.\n\nTitle: ${tag.title}\nID: ${tag.id}`,
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to create tag: ${message}\n\nMake sure Joplin is running with the Web Clipper service enabled (Tools > Options > Web Clipper).`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "tag_note",
+  {
+    description: "Add a tag to a note. Creates the tag if it doesn't already exist. Use this when the user wants to tag a note or organize notes with tags.",
+    inputSchema: {
+      noteId: z.string().describe("The note ID to tag"),
+      tag: z.string().describe("The tag title (case-insensitive). Will be created if it doesn't exist."),
+    },
+  },
+  async ({ noteId, tag }) => {
+    try {
+      const joplinTag = await client.getOrCreateTag(tag);
+      await client.addNoteToTag(joplinTag.id, noteId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Note tagged successfully.\n\nTag: ${joplinTag.title}\nTag ID: ${joplinTag.id}\nNote ID: ${noteId}`,
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to tag note: ${message}\n\nMake sure Joplin is running with the Web Clipper service enabled (Tools > Options > Web Clipper).`,
           },
         ],
         isError: true,

@@ -22,13 +22,13 @@ export interface JoplinCreatedNote {
   parent_id: string;
 }
 
-export interface JoplinSearchResponse {
-  items: JoplinNote[];
-  has_more: boolean;
+export interface JoplinTag {
+  id: string;
+  title: string;
 }
 
-export interface JoplinFolderListResponse {
-  items: JoplinFolder[];
+interface PaginatedResponse<T> {
+  items: T[];
   has_more: boolean;
 }
 
@@ -63,19 +63,38 @@ export class JoplinClient {
     return response.json() as Promise<T>;
   }
 
+  private async fetchAllPages<T>(
+    path: string,
+    params: Record<string, string> = {}
+  ): Promise<T[]> {
+    const items: T[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const data = await this.request<PaginatedResponse<T>>(path, {
+        ...params,
+        page: String(page),
+      });
+      items.push(...data.items);
+      hasMore = data.has_more;
+      page++;
+    }
+
+    return items;
+  }
+
   async search(query: string): Promise<JoplinNote[]> {
-    const data = await this.request<JoplinSearchResponse>("/search", {
+    return this.fetchAllPages<JoplinNote>("/search", {
       query,
       fields: "id,title",
     });
-    return data.items;
   }
 
   async listFolders(): Promise<JoplinFolder[]> {
-    const data = await this.request<JoplinFolderListResponse>("/folders", {
+    return this.fetchAllPages<JoplinFolder>("/folders", {
       fields: "id,title",
     });
-    return data.items;
   }
 
   async getFolder(id: string): Promise<JoplinFolder> {
@@ -85,11 +104,10 @@ export class JoplinClient {
   }
 
   async getNotesInFolder(folderId: string): Promise<JoplinNote[]> {
-    const data = await this.request<JoplinSearchResponse>(
+    return this.fetchAllPages<JoplinNote>(
       `/folders/${encodeURIComponent(folderId)}/notes`,
       { fields: "id,title" }
     );
-    return data.items;
   }
 
   async createNote(title: string, body: string, parentId: string): Promise<JoplinCreatedNote> {
@@ -104,5 +122,42 @@ export class JoplinClient {
     return this.request<JoplinNoteDetail>(`/notes/${encodeURIComponent(id)}`, {
       fields: "id,title,body,source_url,parent_id,updated_time,created_time",
     });
+  }
+
+  async getAllTags(): Promise<JoplinTag[]> {
+    return this.fetchAllPages<JoplinTag>("/tags", {
+      fields: "id,title",
+    });
+  }
+
+  async getNotesForTag(tagId: string): Promise<JoplinNote[]> {
+    return this.fetchAllPages<JoplinNote>(
+      `/tags/${encodeURIComponent(tagId)}/notes`,
+      { fields: "id,title" }
+    );
+  }
+
+  async createTag(title: string): Promise<JoplinTag> {
+    return this.request<JoplinTag>("/tags", {}, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+  }
+
+  async addNoteToTag(tagId: string, noteId: string): Promise<void> {
+    await this.request(`/tags/${encodeURIComponent(tagId)}/notes`, {}, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: noteId }),
+    });
+  }
+
+  async getOrCreateTag(title: string): Promise<JoplinTag> {
+    const tags = await this.getAllTags();
+    const normalised = title.toLowerCase();
+    const existing = tags.find((t) => t.title.toLowerCase() === normalised);
+    if (existing) return existing;
+    return this.createTag(title);
   }
 }
