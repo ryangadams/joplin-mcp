@@ -320,9 +320,7 @@ server.registerTool(
   },
   async ({ tag }) => {
     try {
-      const tags = await client.getAllTags();
-      const normalised = tag.toLowerCase();
-      const match = tags.find((t) => t.title.toLowerCase() === normalised);
+      const match = await client.findTag(tag);
 
       if (!match) {
         return {
@@ -413,20 +411,27 @@ server.registerTool(
 server.registerTool(
   "tag_note",
   {
-    description: "Add a tag to a note. Creates the tag if it doesn't already exist. Use this when the user wants to tag a note or organize notes with tags.",
+    description: "Add a tag to a note, creating the tag if it doesn't already exist. There is no need to call create_tag first. Use this when the user wants to tag a note or organize notes with tags.",
     inputSchema: {
       noteId: z.string().describe("The note ID to tag"),
-      tag: z.string().describe("The tag title (case-insensitive). Will be created if it doesn't exist."),
+      tag: z
+        .string()
+        .describe(
+          "The tag TITLE, not the tag ID (case-insensitive), e.g. \"reference\". Will be created if it doesn't exist."
+        ),
     },
   },
   async ({ noteId, tag }) => {
     try {
+      // Confirm the note exists before creating anything, and find out whether
+      // the tag is already applied so a repeat call isn't reported as an error.
+      const [, currentTags] = await Promise.all([
+        client.getNoteSummary(noteId),
+        client.getNoteTags(noteId),
+      ]);
       const joplinTag = await client.getOrCreateTag(tag);
 
-      try {
-        await client.addNoteToTag(joplinTag.id, noteId);
-      } catch {
-        // Joplin returns an error if the note already has this tag
+      if (currentTags.some((t) => t.id === joplinTag.id)) {
         return {
           content: [
             {
@@ -436,6 +441,8 @@ server.registerTool(
           ],
         };
       }
+
+      await client.addNoteToTag(joplinTag.id, noteId);
 
       return {
         content: [

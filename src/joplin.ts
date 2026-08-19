@@ -32,6 +32,36 @@ interface PaginatedResponse<T> {
   has_more: boolean;
 }
 
+/** Joplin IDs are 32 lowercase hex characters. */
+const JOPLIN_ID_PATTERN = /^[0-9a-f]{32}$/i;
+
+export class JoplinApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = "JoplinApiError";
+  }
+}
+
+/** Joplin puts a human-readable reason in the response body; surface it if present. */
+async function describeErrorBody(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    if (!text) return "";
+    try {
+      const parsed = JSON.parse(text) as { error?: string; message?: string };
+      const reason = parsed.error ?? parsed.message;
+      return reason ? ` - ${reason}` : "";
+    } catch {
+      return ` - ${text.slice(0, 200)}`;
+    }
+  } catch {
+    return "";
+  }
+}
+
 export class JoplinClient {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -58,8 +88,9 @@ export class JoplinClient {
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Joplin API error: ${response.status} ${response.statusText}`
+      throw new JoplinApiError(
+        `Joplin API error: ${response.status} ${response.statusText}${await describeErrorBody(response)}`,
+        response.status
       );
     }
 
@@ -138,6 +169,16 @@ export class JoplinClient {
     return { ...note, tags };
   }
 
+  /**
+   * Cheap existence check: `/notes/{id}/tags` returns an empty list for an
+   * unknown note, but `/notes/{id}` 404s, so use that to validate a note ID.
+   */
+  async getNoteSummary(id: string): Promise<JoplinNote> {
+    return this.request<JoplinNote>(`/notes/${encodeURIComponent(id)}`, {
+      fields: "id,title",
+    });
+  }
+
   async getNoteTags(noteId: string): Promise<JoplinTag[]> {
     return this.fetchAllPages<JoplinTag>(
       `/notes/${encodeURIComponent(noteId)}/tags`,
@@ -159,6 +200,11 @@ export class JoplinClient {
   }
 
   async createTag(title: string): Promise<JoplinTag> {
+    if (JOPLIN_ID_PATTERN.test(title.trim())) {
+      throw new Error(
+        `Refusing to create the tag "${title.trim()}": it looks like a Joplin ID rather than a tag title.`
+      );
+    }
     return this.request<JoplinTag>("/tags", {}, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -174,11 +220,35 @@ export class JoplinClient {
     });
   }
 
-  async getOrCreateTag(title: string): Promise<JoplinTag> {
+  /**
+   * Resolve a tag by title (case-insensitive). Callers sometimes pass a tag ID
+   * where a title is expected, so an ID-shaped input is looked up by ID first —
+   * otherwise it would be treated as a brand new title and create a tag named
+   * after another tag's ID.
+   */
+  async findTag(titleOrId: string): Promise<JoplinTag | undefined> {
     const tags = await this.getAllTags();
-    const normalised = title.toLowerCase();
-    const existing = tags.find((t) => t.title.toLowerCase() === normalised);
+    const normalised = titleOrId.trim().toLowerCase();
+
+    if (JOPLIN_ID_PATTERN.test(normalised)) {
+      return tags.find((t) => t.id.toLowerCase() === normalised);
+    }
+
+    return tags.find((t) => t.title.toLowerCase() === normalised);
+  }
+
+  async getOrCreateTag(titleOrId: string): Promise<JoplinTag> {
+    const title = titleOrId.trim();
+    const existing = await this.findTag(title);
     if (existing) return existing;
+
+    if (JOPLIN_ID_PATTERN.test(title)) {
+      throw new Error(
+        `"${title}" looks like a Joplin ID, not a tag title, and no tag has that ID. ` +
+          `Pass the tag's title (e.g. "reference") instead.`
+      );
+    }
+
     return this.createTag(title);
   }
 }
